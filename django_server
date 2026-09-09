@@ -1,0 +1,13 @@
+$ cd server
+$ python3 manage.py runserver 0.0.0.0:8000
+Watching for file changes with StatReloader
+Performing system checks...
+System check identified no issues (0 silenced).
+Starting development server at http://0.0.0.0:8000/
+
+$ ps -ef | grep '[m]anage.py runserver'
+theia 8055 8054 0 11:37 pts/0 00:00:00 python3 manage.py runserver 0.0.0.0:8000
+theia 8056 8055 1 11:37 pts/0 00:00:06 /usr/bin/python3 manage.py runserver 0.0.0.0:8000
+
+$ curl -s -o /dev/null -w 'HTTP %{http_code}\n' http://localhost:8000/
+HTTP 200

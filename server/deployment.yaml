@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dealership
+  labels:
+    app: dealership
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dealership
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+  template:
+    metadata:
+      labels:
+        app: dealership
+    spec:
+      containers:
+        - name: dealership
+          image: us.icr.io/REPLACE_WITH_NAMESPACE/dealership:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dealership
+spec:
+  selector:
+    app: dealership
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000

@@ -1,65 +1,152 @@
-# Uncomment the required imports before adding the code
-
-# from django.shortcuts import render
-# from django.http import HttpResponseRedirect, HttpResponse
-# from django.contrib.auth.models import User
-# from django.shortcuts import get_object_or_404, render, redirect
-# from django.contrib.auth import logout
-# from django.contrib import messages
-# from datetime import datetime
-
-from django.http import JsonResponse
-from django.contrib.auth import login, authenticate
-import logging
 import json
+import logging
+
+from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.models import User
+from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-# from .populate import initiate
+
+from .models import CarMake, CarModel
+from .populate import initiate
+from .restapis import analyze_review_sentiments, get_request, post_review
 
 
-# Get an instance of a logger
 logger = logging.getLogger(__name__)
 
 
-# Create your views here.
+def _json_body(request):
+    try:
+        return json.loads(request.body or "{}")
+    except json.JSONDecodeError:
+        return {}
 
-# Create a `login_request` view to handle sign in request
+
 @csrf_exempt
 def login_user(request):
-    # Get username and password from request.POST dictionary
-    data = json.loads(request.body)
-    username = data['userName']
-    password = data['password']
-    # Try to check if provide credential can be authenticated
+    if request.method != "POST":
+        return JsonResponse({"status": "Method Not Allowed"}, status=405)
+
+    data = _json_body(request)
+    username = data.get("userName", "")
+    password = data.get("password", "")
     user = authenticate(username=username, password=password)
-    data = {"userName": username}
-    if user is not None:
-        # If user is valid, call login method to login current user
-        login(request, user)
-        data = {"userName": username, "status": "Authenticated"}
-    return JsonResponse(data)
+    if user is None:
+        return JsonResponse(
+            {"userName": username, "status": "Unauthenticated"},
+            status=401,
+        )
 
-# Create a `logout_request` view to handle sign out request
-# def logout_request(request):
-# ...
+    login(request, user)
+    return JsonResponse(
+        {
+            "userName": username,
+            "firstName": user.first_name,
+            "lastName": user.last_name,
+            "status": "Authenticated",
+        }
+    )
 
-# Create a `registration` view to handle sign up request
-# @csrf_exempt
-# def registration(request):
-# ...
 
-# # Update the `get_dealerships` view to render the index page with
-# a list of dealerships
-# def get_dealerships(request):
-# ...
+def logout_request(request):
+    username = request.user.username if request.user.is_authenticated else ""
+    logout(request)
+    return JsonResponse({"userName": "", "loggedOutUser": username})
 
-# Create a `get_dealer_reviews` view to render the reviews of a dealer
-# def get_dealer_reviews(request,dealer_id):
-# ...
 
-# Create a `get_dealer_details` view to render the dealer details
-# def get_dealer_details(request, dealer_id):
-# ...
+@csrf_exempt
+def registration(request):
+    if request.method != "POST":
+        return JsonResponse({"status": "Method Not Allowed"}, status=405)
 
-# Create a `add_review` view to submit a review
-# def add_review(request):
-# ...
+    data = _json_body(request)
+    username = data.get("userName", "").strip()
+    password = data.get("password", "")
+    if not username or not password:
+        return JsonResponse(
+            {"status": False, "error": "Username and password are required"},
+            status=400,
+        )
+    if User.objects.filter(username=username).exists():
+        return JsonResponse(
+            {"status": False, "error": "Already Registered"},
+            status=409,
+        )
+
+    user = User.objects.create_user(
+        username=username,
+        password=password,
+        first_name=data.get("firstName", "").strip(),
+        last_name=data.get("lastName", "").strip(),
+        email=data.get("email", "").strip(),
+    )
+    login(request, user)
+    return JsonResponse(
+        {
+            "userName": username,
+            "firstName": user.first_name,
+            "lastName": user.last_name,
+            "status": "Authenticated",
+        },
+        status=201,
+    )
+
+
+def get_dealerships(request, state="All"):
+    endpoint = "/fetchDealers" if state == "All" else f"/fetchDealers/{state}"
+    dealerships = get_request(endpoint)
+    return JsonResponse({"status": 200, "dealers": dealerships})
+
+
+def get_dealer_details(request, dealer_id):
+    dealership = get_request(f"/fetchDealer/{dealer_id}")
+    return JsonResponse({"status": 200, "dealer": dealership})
+
+
+def get_dealer_reviews(request, dealer_id):
+    reviews = get_request(f"/fetchReviews/dealer/{dealer_id}")
+    for review_detail in reviews:
+        response = analyze_review_sentiments(review_detail.get("review", ""))
+        review_detail["sentiment"] = response.get("sentiment", "neutral")
+    return JsonResponse({"status": 200, "reviews": reviews})
+
+
+@csrf_exempt
+def add_review(request):
+    if not request.user.is_authenticated:
+        return JsonResponse(
+            {"status": 403, "message": "Unauthorized"},
+            status=403,
+        )
+    if request.method != "POST":
+        return JsonResponse(
+            {"status": 405, "message": "Method Not Allowed"},
+            status=405,
+        )
+
+    response = post_review(_json_body(request))
+    if response is None:
+        return JsonResponse(
+            {"status": 502, "message": "Error in posting review"},
+            status=502,
+        )
+    return JsonResponse(
+        {"status": 200, "message": "Review posted successfully", "review": response}
+    )
+
+
+def get_cars(request):
+    if CarMake.objects.count() == 0:
+        initiate()
+    cars = [
+        {
+            "CarModel": car_model.name,
+            "CarMake": car_model.car_make.name,
+            "CarType": car_model.get_type_display(),
+            "CarYear": car_model.year,
+        }
+        for car_model in CarModel.objects.select_related("car_make").order_by(
+            "car_make__name",
+            "name",
+        )
+    ]
+    return JsonResponse({"CarModels": cars})
